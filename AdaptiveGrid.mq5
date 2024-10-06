@@ -60,8 +60,8 @@ int OnInit()
    
 //---
    m_trade.SetExpertMagicNumber(magic_number);
-   //--- create a timer with a 1 second period
-   EventSetTimer(3);
+   //--- create a timer with a 5 second period
+   EventSetTimer(5);
    return(INIT_SUCCEEDED);
   }
 //+------------------------------------------------------------------+
@@ -77,6 +77,7 @@ void OnTimer()
    if (IsTradeAllowed() == false) { return; }
    OnNewBar();
 }
+
 //+------------------------------------------------------------------+
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
@@ -335,29 +336,29 @@ double EmaValue(string symbol, ENUM_TIMEFRAMES timeframe, int maPeriod, uint ind
 void InitialOrders() {
    double gridPrice;
    double marketBuyPrice = MarketBuyPrice();
-   double gridTop = MathMin(max_price, marketBuyPrice);
+   double gridTop = NormalizeDouble(MathMin(max_price, marketBuyPrice));
    for (gridPrice=LowestPendingOpenPrice(); gridPrice < gridTop; gridPrice+=price_gap) {
       m_trade.BuyLimit(lot_size, gridPrice, _Symbol, stoploss_price, gridPrice + price_gap, ORDER_TIME_GTC);
    }
 }
 
 void OpenLimitOrder() {
-   Print("OpenLimitOrder");
    double gridTop = MarketBuyPrice();
+   Print("OpenLimitOrder at Ask:", gridTop);
    double minOpenTakeProfitPrice = MinOpenTakeProfitPrice();
-   double maxLimitBuyPrice = MaxLimitBuyPrice();
+   double maxLimitTakeProfitPrice = MaxLimitTakeProfitPrice();
    
-   if (maxLimitBuyPrice == 0) return;
+   if (maxLimitTakeProfitPrice == 0) return;
    if (minOpenTakeProfitPrice > 0) {
-      gridTop = MathMin(gridTop, minOpenTakeProfitPrice - price_gap);
+      gridTop = MathMin(gridTop, minOpenTakeProfitPrice);
    }
-   double gridPrice = maxLimitBuyPrice + price_gap;
-   
-   if (gridPrice >= gridTop) return;
-   
-   Print(gridPrice, " ", gridTop);
-   for (; gridPrice < gridTop; gridPrice+=price_gap) {
+   double gridPrice = maxLimitTakeProfitPrice;
+   double gridTakeProfitPrice = NormalizeDouble(gridPrice + price_gap);
+   while(gridTakeProfitPrice < gridTop) {
+      Print(gridPrice, " ", gridTakeProfitPrice, " ", gridTop);
       m_trade.BuyLimit(lot_size, gridPrice, _Symbol, stoploss_price, gridPrice + price_gap, ORDER_TIME_GTC);
+      gridPrice = NormalizeDouble(gridPrice + price_gap);
+      gridTakeProfitPrice = NormalizeDouble(gridPrice + price_gap);
    }
 }
 
@@ -367,8 +368,12 @@ void CloseOrOpenLimitOrderFromBottom() {
    if (bottomPrice > topPrice) {
       CloseOrderBelow(bottomPrice);
    } else if (bottomPrice < topPrice) {
-      for (double gridPrice = bottomPrice; gridPrice < topPrice; gridPrice+=price_gap) {
-         m_trade.BuyLimit(lot_size, gridPrice, _Symbol, stoploss_price, gridPrice + price_gap, ORDER_TIME_GTC);
+      double gridPrice = bottomPrice;
+      double gridTakeProfitPrice = NormalizeDouble(gridPrice + price_gap);
+      while(gridPrice < topPrice) {
+         m_trade.BuyLimit(lot_size, gridPrice, _Symbol, stoploss_price, gridTakeProfitPrice, ORDER_TIME_GTC);
+         gridPrice = NormalizeDouble(gridPrice + price_gap);
+         gridTakeProfitPrice = NormalizeDouble(gridPrice + price_gap);
       }
    } else {
       return;
@@ -413,11 +418,11 @@ void CloseAllPositionsIfProfit() {
 }
 
 double MarketBuyPrice() {
-   return SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   return NormalizeDouble(SymbolInfoDouble(_Symbol, SYMBOL_ASK));
 }
 
 double MarketSellPrice() {
-   return SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   return NormalizeDouble(SymbolInfoDouble(_Symbol, SYMBOL_BID));
 }
 
 double NormalizeDouble(double value) {
@@ -449,6 +454,30 @@ double MaxLimitBuyPrice() {
    return maxLimitPrice;
 }
 
+double MaxLimitTakeProfitPrice() {
+   int totalOrder = OrdersTotal();
+   if (totalOrder == 0) return 0;
+   int index;
+   double maxLimitTakeProfitPrice = 0; 
+   for (index= 0; index < totalOrder; index++) {
+      ulong ticket = OrderGetTicket(index);
+      if (OrderSelect(ticket) == false) {
+         Print("Error selecting order", GetLastError());
+         continue;
+      }
+      if (OrderGetInteger(ORDER_MAGIC) != magic_number) {
+         continue;
+      }
+      
+      ENUM_ORDER_TYPE type = (ENUM_ORDER_TYPE) OrderGetInteger(ORDER_TYPE);
+      if (type == ORDER_TYPE_BUY_LIMIT) {
+         maxLimitTakeProfitPrice = MathMax(maxLimitTakeProfitPrice, OrderGetDouble(ORDER_TP));
+      }
+   }
+   maxLimitTakeProfitPrice = NormalizeDouble(maxLimitTakeProfitPrice);
+   Print("maxLimitTakeProfitPrice ", maxLimitTakeProfitPrice);
+   return maxLimitTakeProfitPrice;
+}
 
 double MinLimitBuyPrice() {
    int totalOrder = OrdersTotal();
@@ -567,12 +596,17 @@ void CloseAllPositions() {
 double LowestPendingOpenPrice() {
    double maxLimitBuyPrice = MaxLimitBuyPrice();
    if (maxLimitBuyPrice == 0) {
-      maxLimitBuyPrice = MarketBuyPrice();
+      double marketBuyPrice = MarketBuyPrice();
+      for (double price; price < marketBuyPrice; price += price_gap) {
+         maxLimitBuyPrice = price;
+      }
    }
    double lowestPrice = maxLimitBuyPrice - ((number_pending_order-1) * price_gap);
    double pow10 = MathPow(10, _Digits);
    double roundedLowestPrice = MathRound(lowestPrice * pow10 / price_gap) * price_gap / pow10;
-   return MathMax(roundedLowestPrice, min_price);
+   double result = NormalizeDouble(MathMax(roundedLowestPrice, min_price));
+   Print("LowestPendingOpenPrice", result);
+   return result;
 }
 
 void CloseOrderBelow(double price) {
