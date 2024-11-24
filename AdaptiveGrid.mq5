@@ -101,10 +101,8 @@ bool IsTradeAllowed(){
 void OnNewBar() {
    string comment = "";
    comment += timePreviousBar + "\n";
-   if (OrdersTotal() == 0) {
-      InitialOrders();
-   }
    DetectTrend();
+   bool shouldStopLimitOrder = false;
    if (trendDetectStrategy != None) {
       if (trendMode == Up) {
          comment += "Up trend\n";
@@ -112,14 +110,22 @@ void OnNewBar() {
       } else if (trendMode == Down) {
          comment += "Down trend\n";
          CloseAllPositionsIfProfit();
+         shouldStopLimitOrder = true;
       } else if (trendMode == Sideway) {
          comment += "Sideway\n";
       }
    }
-   OpenLimitOrder();
-   CloseOrOpenLimitOrderFromBottom();
-   if (market_order_above > 0 && PositionsTotal() < market_order_above) {
-      OpenMarketOrderForLevelAbove(market_order_above);
+   if (shouldStopLimitOrder) {
+      CloseOrderBelow(MarketBuyPrice());
+   } else {
+      if (OrdersTotal() == 0) {
+         InitialOrders();
+      }
+      OpenLimitOrder();
+      CloseOrOpenLimitOrderFromBottom();
+      if (market_order_above > 0 && PositionsTotal() < market_order_above) {
+         OpenMarketOrderForLevelAbove(market_order_above);
+      }
    }
    string currency=AccountInfoString(ACCOUNT_CURRENCY);
    ENUM_ACCOUNT_STOPOUT_MODE stopOutMode = (ENUM_ACCOUNT_STOPOUT_MODE) AccountInfoInteger(ACCOUNT_MARGIN_SO_MODE);
